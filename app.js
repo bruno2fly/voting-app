@@ -189,23 +189,23 @@ app.get('/staff', (req, res) => {
   const rows = listArtists.all();
   const body = `
     <div class="card">
-      <h1 class="title">Create Artist</h1>
-      <p class="muted">Add an artist and share their voting link.</p>
+      <h1 class="title">Cadastrar Comediante</h1>
+      <p class="muted">Adicionar Comediante.</p>
       <form id="createForm">
-        <input type="text" name="name" placeholder="Artist name" required />
+        <input type="text" name="name" placeholder="Nome do Comediante" required />
         <div class="row" style="margin-top:12px">
-          <button type="submit">Create</button>
-          <a class="pill" href="/leaderboard">View Leaderboard</a>
-          <a class="pill" href="/">Public Home</a>
+          <button type="submit">Adicionr</button>
+          <a class="pill" href="/leaderboard">Ver tabela</a>
+          <a class="pill" href="/">Home</a>
         </div>
       </form>
       <p id="msg" class="muted" style="margin-top:12px"></p>
-      <h3 style="margin-top:24px">Artists</h3>
+      <h3 style="margin-top:24px">Comediantes</h3>
       <ul class="list">
         ${rows.map(r => `
           <li>
             <span>${r.name}</span>
-            <span><a href="/a/${r.slug}">Share link</a></span>
+            <span><a href="/a/${r.slug}">Compartilhar</a></span>
           </li>`).join('')}
       </ul>
     </div>
@@ -232,6 +232,26 @@ app.get('/staff', (req, res) => {
   res.send(layout({ title:'Staff', body }));
 });
 
+// -------- Staff Login --------
+function isStaff(req) {
+  return req.cookies.staff === (process.env.STAFF_PASS || 'change-this-staff-pass');
+}
+
+app.post('/staff/login', (req, res) => {
+  const { password } = req.body || {};
+  if (password === (process.env.STAFF_PASS || 'change-this-staff-pass')) {
+    res.cookie('staff', password, { httpOnly: true });
+    res.redirect('/staff');
+  } else {
+    res.status(403).send('Senha incorreta');
+  }
+});
+
+app.get('/staff', (req, res) => {
+  if (!isStaff(req)) return res.status(403).send('Acesso negado');
+  // here you render staff page
+});
+
 app.post('/api/artists', (req, res) => {
   if (!isStaff(req)) return res.status(403).json({ error:'Forbidden' });
   const name = (req.body.name || '').trim();
@@ -241,7 +261,7 @@ app.post('/api/artists', (req, res) => {
     const info = insertArtist.run(name, slug);
     res.json({ id: info.lastInsertRowid, name, slug, link:`/a/${slug}` });
   } catch {
-    res.status(400).json({ error:'Could not create artist' });
+    res.status(400).json({ error:'Tente Novamente' });
   }
 });
 
@@ -251,14 +271,16 @@ app.get('/a/:slug', (req, res) => {
   const guard = cookieGuard(req, res);
   const body = `
     <div class="card">
-      <h1 class="title">Vote: ${artist.name}</h1>
-      <p class="muted">Rate from 0 to 10 (whole numbers). One vote per IP.</p>
+      <h1 class="title">Votar: ${artist.name}</h1>
+      <p class="muted">Clique em votar e dê uma nota de 0 - 10.</p>
       <form id="voteForm">
-        <input type="number" min="0" max="10" step="1" name="score" placeholder="Your score (0–10)" required />
+        <input type="number" min="0" max="10" step="1" name="score" placeholder="Sua Nota (0–10) />
         <input type="hidden" name="artist_id" value="${artist.id}" />
         <div class="row" style="margin-top:12px">
-          <button type="submit">Submit Vote</button>
-          <a class="pill" href="/leaderboard">Leaderboard</a>
+         <button type="submit" style="background:black; color:white; padding:10px 20px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">
+  Votar
+</button>
+          <a class="pill" href="/leaderboard">Tabla de Liderança</a>
         </div>
       </form>
       <p id="msg" class="muted" style="margin-top:12px"></p>
@@ -272,7 +294,7 @@ app.get('/a/:slug', (req, res) => {
         const payload = { artist_id: Number(fd.get('artist_id')), score: Number(fd.get('score')) };
         const r = await fetch('/api/vote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         const data = await r.json();
-        msg.textContent = r.ok ? 'Thanks! Your vote was recorded.' : (data.error || 'Unable to vote.');
+        msg.textContent = r.ok ? 'Obrigado! Seu voto foi registrado.' : (data.error || 'não foi possível registrar seu voto.');
       });
     </script>`;
   res.send(layout({ title:`Vote — ${artist.name}`, body }));
