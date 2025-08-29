@@ -1,3 +1,4 @@
+// app.js — Minimal working voting app (white theme, staff-only create, 0–10 voting)
 const express = require('express');
 const helmet = require('helmet');
 const Database = require('better-sqlite3');
@@ -5,185 +6,248 @@ const { customAlphabet } = require('nanoid');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const path = require('path');
-// Serve static files (like logo image) from /public
 
-const app = express();                  // <- create the app FIRST
+// -------- App / Config --------
+const app = express();
+app.set('trust proxy', 1); // needed on Render/behind proxies
+
 const PORT = process.env.PORT || 3000;
 const STAFF_PASS = process.env.STAFF_PASS || 'change-this-staff-pass';
+const SALT = process.env.IP_SALT || 'change-this-salt-in-env';
+const VOTE_WINDOW_MINUTES = parseInt(process.env.VOTE_WINDOW_MINUTES || '0', 10); // 0 = unlimited once per IP
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'votes.sqlite');
 
-// Middleware (order matters)
 app.use(helmet());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public'))); // <- static AFTER app is created
-app.get('/api/health', (req, res) => res.json({ ok: true }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-
-// ---------- Config ----------
-const nanoid = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 8);
-const SALT = process.env.IP_SALT || 'change-this-salt-in-env';
-const VOTE_WINDOW_MINUTES = parseInt(process.env.VOTE_WINDOW_MINUTES || '0', 10); // 0 = unlimited time
-
-// ---------- DB ----------
-const db = new Database(path.join(__dirname, 'votes.sqlite'));
+// -------- DB --------
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS artists (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  slug TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS artists (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE
+  )
+`).run();
 
-CREATE TABLE IF NOT EXISTS votes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  artist_id INTEGER NOT NULL,
-  score INTEGER NOT NULL CHECK(score BETWEEN 0 AND 10),
-  ip_hash TEXT NOT NULL,
-  user_agent TEXT,
-  cookie_guard TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY(artist_id) REFERENCES artists(id)
-);
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS votes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    artist_id  INTEGER NOT NULL,
+    score      INTEGER NOT NULL,
+    ip_hash    TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (artist_id, ip_hash)
+  )
+`).run();
 
-CREATE INDEX IF NOT EXISTS idx_votes_artist ON votes(artist_id);
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_artist_ip ON votes(artist_id, ip_hash);
-`);
+const nanoid = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 8);
 
-const insertArtist = db.prepare(`INSERT INTO artists (name, slug) VALUES (?, ?)`);
-const getArtistBySlug = db.prepare(`SELECT * FROM artists WHERE slug = ?`);
-const getArtistById = db.prepare(`SELECT * FROM artists WHERE id = ?`);
-const listArtists = db.prepare(`SELECT id, name, slug, created_at FROM artists ORDER BY created_at DESC`);
-const insertVote = db.prepare(`INSERT INTO votes (artist_id, score, ip_hash, user_agent, cookie_guard) VALUES (?, ?, ?, ?, ?)`);
-const getVoteByArtistAndIp = db.prepare(`SELECT * FROM votes WHERE artist_id = ? AND ip_hash = ?`);
-const countVotesByCookie = db.prepare(`SELECT COUNT(1) as n FROM votes WHERE artist_id = ? AND cookie_guard = ?`);
+// statements
+const insertArtist = db.prepare('INSERT INTO artists (name, slug) VALUES (?, ?)');
+const getArtistBySlug = db.prepare('SELECT * FROM artists WHERE slug = ?');
+const getArtistById = db.prepare('SELECT * FROM artists WHERE id = ?');
+const listArtists = db.prepare('SELECT * FROM artists ORDER BY id DESC');
+const insertVote = db.prepare('INSERT INTO votes (artist_id, score, ip_hash) VALUES (@artist_id, @score, @ip_hash)');
+const getLastVoteByIp = db.prepare('SELECT created_at FROM votes WHERE artist_id = ? AND ip_hash = ? ORDER BY id DESC LIMIT 1');
+
 const leaderboardStmt = db.prepare(`
-  SELECT a.id, a.name, a.slug,
-         COUNT(v.id) as votes,
-         ROUND(AVG(v.score), 2) as avg_score
+  SELECT
+    a.id,
+    a.name,
+    COUNT(v.id)               AS votes,
+    COALESCE(SUM(v.score),0)  AS total_score,
+    ROUND(AVG(v.score),2)     AS avg_score
   FROM artists a
   LEFT JOIN votes v ON v.artist_id = a.id
   GROUP BY a.id
-  ORDER BY avg_score DESC NULLS LAST, votes DESC, a.created_at ASC;
+  ORDER BY total_score DESC, votes DESC, a.name ASC
 `);
 
-// ---------- Helpers ----------
-function layout({ title, body }) {
-  return `<!doctype html>
-  <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${title}</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: Arial, sans-serif;
-        background: #fff;      /* white background */
-        color: #000;           /* black text */
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        min-height: 100vh;
-      }
-      header { padding: 20px; text-align: center; }
-      header img { max-width: 220px; height: auto; }
-      .container { max-width: 720px; width: 100%; padding: 20px; }
-      .card { background: #f9f9f9; border: 1px solid #ccc; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-      .title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
-      .list { list-style: none; padding: 0; }
-      .list li { display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 10px 0; }
-      a, button { background: #000; color: #fff; padding: 8px 14px; border-radius: 6px; border: none; text-decoration: none; font-weight: bold; cursor: pointer; }
-      input { padding: 10px; border-radius: 6px; border: 1px solid #ccc; width: 100%; margin-bottom: 10px; }
-      .row { display:flex; gap:12px; flex-wrap:wrap; }
-      .pill { background:#fff; color:#000; border:1px solid #000; }
-    </style>
-  </head>
-  <body>
-    <header>
-      <img src="public/logo.jpeg" alt="Ratazana Comedy Logo" />
-    </header>
-    <div class="container">
-      ${body}
-    </div>
-  </body>
-  </html>`;
-}
-
-app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
-app.use(cookieParser());
-
-function isStaff(req) { return req.cookies.staff === 'ok'; }
+// -------- helpers --------
+const isStaff = (req) => req.cookies.staff === 'ok';
 
 function clientIp(req) {
-  // Be careful behind proxies: trust proxy in production or configure IP source
-  const xfwd = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return xfwd || req.socket.remoteAddress || '0.0.0.0';
+  // trust proxy above ensures this works on Render
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.connection?.remoteAddress || '0.0.0.0';
 }
 
 function ipHash(ip) {
-  return crypto.createHmac('sha256', SALT).update(ip).digest('hex');
+  return crypto.createHash('sha256').update(ip + SALT).digest('hex');
 }
 
 function cookieGuard(req, res) {
-  if (!req.cookies._voter) {
-    const token = nanoid();
-    res.cookie('_voter', token, { httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 24 * 365 });
-    return token;
+  // simple write-once cookie so we can rate-limit by cookie if needed later
+  const token = req.cookies.voter || crypto.randomBytes(16).toString('hex');
+  if (!req.cookies.voter) {
+    res.cookie('voter', token, { httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 24 * 365 });
   }
-  return req.cookies._voter;
+  return token;
 }
 
-function voteWindowQuery() {
-  if (!VOTE_WINDOW_MINUTES) return '';
-  return ` AND created_at >= datetime('now', '-${VOTE_WINDOW_MINUTES} minutes') `;
+function layout({ title, body }) {
+  return `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>${title}</title>
+      <style>
+        :root { --border:#d0d0d0; --muted:#666; --bg:#fff; --card:#f9f9f9; --txt:#000; }
+        * { box-sizing:border-box; }
+        body {
+          margin:0; background:var(--bg); color:var(--txt);
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+          display:flex; flex-direction:column; align-items:center; min-height:100vh;
+        }
+        header { padding:20px; text-align:center; }
+        header img { max-width:220px; height:auto; }
+        .container { width:100%; max-width:920px; padding:20px; }
+        .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:24px; }
+        .title { font-size:32px; font-weight:800; margin:0 0 8px; }
+        .muted { color:var(--muted); margin:0 0 16px; }
+        .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+        input[type="text"], input[type="number"], input[type="password"] {
+          width:100%; padding:12px; border:1px solid var(--border); border-radius:10px; font-size:16px;
+        }
+        button, .pill {
+          appearance:none; border:none; cursor:pointer; text-decoration:none;
+          padding:10px 16px; border-radius:10px; font-weight:700; font-size:16px;
+          background:#000; color:#fff;
+        }
+        .pill { background:#fff; color:#000; border:1px solid #000; }
+        ul.list { list-style:none; padding:0; margin:0; }
+        ul.list li { display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid var(--border); }
+        .score { font-weight:800; }
+        a { color:#000; }
+      </style>
+    </head>
+    <body>
+      <header>
+        <img src="/logo.jpeg" alt="Ratazana Comedy Logo"/>
+      </header>
+      <div class="container">
+        ${body}
+      </div>
+    </body>
+  </html>`;
 }
 
-// ---------- Views (simple server-side HTML) ----------
-
+// -------- routes (pages) --------
 app.get('/', (req, res) => {
-  // PUBLIC homepage: list all artists with Vote links
-  const artists = listArtists.all();
+  const rows = listArtists.all();
   const body = `
     <div class="card">
-      <h1 class="title">Votação Open Mic</h1>
-      <p class="muted">Clique em votar e vote com pontuação 0-10</p>
-      <ul class="list">
-        ${artists.map(a => `
-          <li>
-            <span>${a.name}</span>
-            <span><a href="/a/${a.slug}">Votar</a></span>
-          </li>
-        `).join('')}
-      </ul>
-      <div class="row" style="margin-top:12px">
+      <h1 class="title">Vote for an Artist</h1>
+      <p class="muted">Tap an artist below to submit your 0–10 score.</p>
+      <div class="row" style="margin-bottom:16px">
         <a class="pill" href="/leaderboard">View Leaderboard</a>
-        <a class="pill" href="/staff-login">Staff Login</a>
+        ${isStaff(req) ? '<a class="pill" href="/staff">Staff Area</a>' : '<a class="pill" href="/staff-login">Staff Login</a>'}
       </div>
+      <ul class="list">
+        ${rows.length === 0 ? '<li><span>No artists yet.</span><span>—</span></li>' : rows.map(r=>`
+          <li>
+            <span><strong>${r.name}</strong></span>
+            <span><a href="/a/${r.slug}">Vote</a></span>
+          </li>`).join('')}
+      </ul>
     </div>`;
-  res.send(layout({ title: 'Voting — Artists', body }));
+  res.send(layout({ title:'Home', body }));
 });
 
-app.post('/artists', (req, res) => {
-  if (!isStaff(req)) return res.status(403).send('Forbidden');
-  const name = (req.body.name || '').trim();
-  if (!name) return res.status(400).send('Name required');
-  const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${nanoid()}`.replace(/-+/g, '-');
-  try {
-    insertArtist.run(name, slug);
-  } catch (e) {
-    return res.status(400).send('Could not create artist');
+app.get('/staff-login', (req, res) => {
+  const body = `
+    <div class="card">
+      <h1 class="title">Staff Login</h1>
+      <form method="POST" action="/staff-login">
+        <input type="password" name="password" placeholder="Enter staff password" required />
+        <div class="row" style="margin-top:12px">
+          <button type="submit">Login</button>
+          <a href="/" class="pill">Back</a>
+        </div>
+      </form>
+    </div>`;
+  res.send(layout({ title:'Staff Login', body }));
+});
+
+app.post('/staff-login', (req, res) => {
+  const password = (req.body.password || '').trim();
+  if (password && password === STAFF_PASS) {
+    res.cookie('staff', 'ok', { httpOnly: true, sameSite:'lax', maxAge: 1000*60*60*8 });
+    return res.redirect('/staff');
   }
-  res.redirect('/staff');
+  return res.status(401).send('Invalid password');
+});
+
+app.get('/staff', (req, res) => {
+  if (!isStaff(req)) return res.status(403).send('Forbidden');
+  const rows = listArtists.all();
+  const body = `
+    <div class="card">
+      <h1 class="title">Create Artist</h1>
+      <p class="muted">Add an artist and share their voting link.</p>
+      <form id="createForm">
+        <input type="text" name="name" placeholder="Artist name" required />
+        <div class="row" style="margin-top:12px">
+          <button type="submit">Create</button>
+          <a class="pill" href="/leaderboard">View Leaderboard</a>
+          <a class="pill" href="/">Public Home</a>
+        </div>
+      </form>
+      <p id="msg" class="muted" style="margin-top:12px"></p>
+      <h3 style="margin-top:24px">Artists</h3>
+      <ul class="list">
+        ${rows.map(r => `
+          <li>
+            <span>${r.name}</span>
+            <span><a href="/a/${r.slug}">Share link</a></span>
+          </li>`).join('')}
+      </ul>
+    </div>
+    <script>
+      const f = document.getElementById('createForm');
+      const msg = document.getElementById('msg');
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(f);
+        const r = await fetch('/api/artists', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({ name: fd.get('name') })
+        });
+        const data = await r.json();
+        if (r.ok) {
+          msg.textContent = 'Created: ' + data.name + ' — link ' + data.link;
+          location.reload();
+        } else {
+          msg.textContent = data.error || 'Create failed';
+        }
+      });
+    </script>`;
+  res.send(layout({ title:'Staff', body }));
+});
+
+app.post('/api/artists', (req, res) => {
+  if (!isStaff(req)) return res.status(403).json({ error:'Forbidden' });
+  const name = (req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error:'Name required' });
+  const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${nanoid()}`.replace(/-+/g,'-');
+  try {
+    const info = insertArtist.run(name, slug);
+    res.json({ id: info.lastInsertRowid, name, slug, link:`/a/${slug}` });
+  } catch {
+    res.status(400).json({ error:'Could not create artist' });
+  }
 });
 
 app.get('/a/:slug', (req, res) => {
   const artist = getArtistBySlug.get(req.params.slug);
   if (!artist) return res.status(404).send('Artist not found');
-
   const guard = cookieGuard(req, res);
   const body = `
     <div class="card">
@@ -201,181 +265,92 @@ app.get('/a/:slug', (req, res) => {
     </div>
     <script>
       const form = document.getElementById('voteForm');
+      const msg = document.getElementById('msg');
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const fd = new FormData(form);
         const payload = { artist_id: Number(fd.get('artist_id')), score: Number(fd.get('score')) };
         const r = await fetch('/api/vote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         const data = await r.json();
-        const msg = document.getElementById('msg');
-        if (r.ok) {
-          msg.textContent = 'Thanks! Your vote was recorded.';
-        } else {
-          msg.textContent = data.error || 'Unable to vote.';
-        }
+        msg.textContent = r.ok ? 'Thanks! Your vote was recorded.' : (data.error || 'Unable to vote.');
       });
-    </script>
-  `;
-  res.send(layout({ title: `Vote — ${artist.name}`, body }));
+    </script>`;
+  res.send(layout({ title:`Vote — ${artist.name}`, body }));
 });
 
+// -------- API: vote --------
+app.post('/api/vote', (req, res) => {
+  try {
+    const artist_id = Number(req.body.artist_id);
+    const score     = Number(req.body.score);
+
+    if (!Number.isInteger(artist_id) || !Number.isInteger(score))
+      return res.status(400).json({ error:'artist_id and score are required' });
+    if (score < 0 || score > 10)
+      return res.status(400).json({ error:'Score must be an integer 0–10' });
+
+    const artist = getArtistById.get(artist_id);
+    if (!artist) return res.status(404).json({ error:'Artist not found' });
+
+    const ip = clientIp(req);
+    const hash = ipHash(ip);
+    const guardToken = cookieGuard(req, res);
+
+    if (VOTE_WINDOW_MINUTES > 0) {
+      const last = getLastVoteByIp.get(artist_id, hash);
+      if (last) {
+        const minutes = (Date.now() - new Date(last.created_at).getTime()) / 60000;
+        if (minutes < VOTE_WINDOW_MINUTES) {
+          return res.status(409).json({ error: `Already voted. Try again in ${Math.ceil(VOTE_WINDOW_MINUTES - minutes)} min.` });
+        }
+      }
+    }
+
+    try {
+      insertVote.run({ artist_id, score, ip_hash: hash });
+      return res.json({ ok:true, guardToken });
+    } catch {
+      return res.status(409).json({ error:'You already voted for this artist.' });
+    }
+  } catch (err) {
+    console.error('VOTE_ERROR', err);
+    return res.status(500).json({ error:'Server error while recording vote' });
+  }
+});
+
+// -------- Leaderboard --------
 app.get('/leaderboard', (req, res) => {
   const rows = leaderboardStmt.all();
   const body = `
     <div class="card">
-      <h1 class="title">Tabela de Liderança</h1>
-      <p class="muted">Pontuação é por soma de todos os votos.</p>
+      <h1 class="title">Leaderboard</h1>
+      <p class="muted">Scored by sum of all votes.</p>
       <ul class="list">
-        ${rows.map((r, i) => `
+        ${rows.map((r,i)=>`
           <li>
-            <span>#${i+1} — <strong>${r.name || '—'}</strong> (${r.votes || 0} votes)</span>
-            <span class="score">${r.avg_score ?? '—'}</span>
+            <span>#${i+1} — <strong>${r.name}</strong> (${r.votes} votes)</span>
+            <span class="score">${r.total_score}</span>
           </li>`).join('')}
       </ul>
       <div class="row" style="margin-top:12px">
-        <a class="pill" href="/">Voltar</a>
+        <a class="pill" href="/">Back</a>
       </div>
     </div>`;
-  res.send(layout({ title: 'Leaderboard', body }));
+  res.send(layout({ title:'Leaderboard', body }));
 });
 
-// ---------- Staff auth pages ----------
-app.get('/staff-login', (req, res) => {
-  const body = `
-    <div class="card">
-      <h1 class="title">Staff Login</h1>
-      <p class="muted">Enter the staff password to manage artists.</p>
-      <form method="post" action="/staff-login">
-        <input type="password" name="password" placeholder="Password" required />
-        <div class="row" style="margin-top:12px">
-          <button type="submit">Login</button>
-          <a class="pill" href="/">Back</a>
-        </div>
-      </form>
-    </div>`;
-  res.send(layout({ title: 'Staff Login', body }));
-});
-
-app.post('/staff-login', (req, res) => {
-  const password = (req.body.password || '').trim();
-  if (password && password === STAFF_PASS) {
-    res.cookie('staff', 'ok', { httpOnly: true, sameSite: 'lax', maxAge: 1000*60*60*8 });
-    return res.redirect('/staff');
-  }
-  res.status(401).send('Invalid password');
-});
-
-app.get('/logout', (req, res) => {
-  res.clearCookie('staff');
-  res.redirect('/');
-});
-
-app.get('/staff', (req, res) => {
-  if (!isStaff(req)) return res.redirect('/staff-login');
-  const artists = listArtists.all();
-  const body = `
-    <div class="grid">
-      <div class="card">
-        <h1 class="title">Create Artist</h1>
-        <p class="muted">Cadastre um artista abaixo (Staff only)</p>
-        <form method="post" action="/artists">
-          <input type="text" name="name" placeholder="Artist name" required />
-          <div class="row" style="margin-top:12px">
-            <button type="submit">Cadastrar Comediante</button>
-            <a class="pill" href="/leaderboard">Ver Tabela</a>
-            <a class="pill" href="/">Pagina Inicial</a>
-            <a class="pill" href="/logout">Logout</a>
-          </div>
-        </form>
-      </div>
-      <div class="card">
-        <h2 class="title">Comediantes</h2>
-        <ul class="list">
-          ${artists.map(a => `
-            <li>
-              <span>${a.name}</span>
-              <span><a href="/a/${a.slug}">Compartilhar</a></span>
-            </li>
-          `).join('')}
-        </ul>
-      </div>
-    </div>`;
-  res.send(layout({ title: 'Staff — Manage Artists', body }));
-});
-
-// ---------- API ----------
-app.post('/api/artists', (req, res) => {
-  const name = (req.body.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'Name required' });
-  const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${nanoid()}`.replace(/-+/g, '-');
-  try {
-    const info = insertArtist.run(name, slug);
-    res.json({ id: info.lastInsertRowid, name, slug, link: `/a/${slug}` });
-  } catch (e) {
-    res.status(400).json({ error: 'Could not create artist' });
-  }
-});
-
-app.post('/api/vote', (req, res) => {
-  try {
-    // Parse numbers safely (form sends strings)
-    const artist_id = Number(req.body.artist_id);
-    const score = Number(req.body.score);
-
-    if (!Number.isInteger(artist_id) || !Number.isInteger(score)) {
-      return res.status(400).json({ error: 'artist_id and score are required' });
-    }
-    if (score < 0 || score > 10) {
-      return res.status(400).json({ error: 'Score must be an integer 0–10' });
-    }
-
-    // Artist must exist
-    const artist = getArtistById.get(artist_id);
-    if (!artist) {
-      return res.status(404).json({ error: 'Artist not found' });
-    }
-
-    // IP + guard
-    const ip = clientIp(req);
-    const ip_hash = ipHash(ip);
-    const guardToken = cookieGuard(req, res);
-
-    try {
-      insertVote.run({ artist_id, score, ip_hash });
-      return res.json({ ok: true, guardToken });
-    } catch (err) {
-      return res.status(409).json({ error: 'You already voted for this artist.' });
-    }
-  } catch (err) {
-    console.error('VOTE_ERROR', err);
-    return res.status(500).json({ error: 'Server error while recording vote' });
-  }
-});
-
-app.get('/api/leaderboard', (req, res) => {
-  const rows = leaderboardStmt.all();
-  res.json(rows);
-});
-
-// ---------- Static health ----------
-app.get('/healthz', (_, res) => res.send('ok'));
-
-
-app.get('/api/debug/votes', (req, res) => {
+// -------- Health/Debug --------
+app.get('/api/health', (req,res)=> res.json({ ok:true }));
+app.get('/api/debug/votes', (req,res)=>{
   const rows = db.prepare(`
-    SELECT artist_id,
-           COUNT(*)            AS votes,
-           SUM(score)          AS total_score,
-           ROUND(AVG(score),2) AS avg_score
-    FROM votes
-    GROUP BY artist_id
-    ORDER BY artist_id
+    SELECT artist_id, COUNT(*) votes, SUM(score) total_score, ROUND(AVG(score),2) avg_score
+    FROM votes GROUP BY artist_id ORDER BY artist_id
   `).all();
   res.json(rows);
 });
 
-
-
-
-\app.listen(PORT, () => console.log(`Voting app running on http://localhost:${PORT}`));
+// -------- Start server --------
+app.listen(PORT, () => {
+  console.log(`Voting app running on http://localhost:${PORT}`);
+});
 
