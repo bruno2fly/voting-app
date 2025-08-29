@@ -148,13 +148,13 @@ app.get('/', (req, res) => {
   const artists = listArtists.all();
   const body = `
     <div class="card">
-      <h1 class="title">Vote for an Artist</h1>
-      <p class="muted">Tap an artist below to submit your 0–10 score.</p>
+      <h1 class="title">Votação Open Mic</h1>
+      <p class="muted">Clique no Artista para dar o seu voto com notas de 0-10</p>
       <ul class="list">
         ${artists.map(a => `
           <li>
             <span>${a.name}</span>
-            <span><a href="/a/${a.slug}">Vote</a></span>
+            <span><a href="/a/${a.slug}">Votar</a></span>
           </li>
         `).join('')}
       </ul>
@@ -276,24 +276,24 @@ app.get('/staff', (req, res) => {
     <div class="grid">
       <div class="card">
         <h1 class="title">Create Artist</h1>
-        <p class="muted">Add an artist and share their voting link. (Staff only)</p>
+        <p class="muted">Cadastre um artista abaixo (Staff only)</p>
         <form method="post" action="/artists">
           <input type="text" name="name" placeholder="Artist name" required />
           <div class="row" style="margin-top:12px">
-            <button type="submit">Create</button>
-            <a class="pill" href="/leaderboard">View Leaderboard</a>
-            <a class="pill" href="/">Public Page</a>
+            <button type="submit">Cadastrar Comediante</button>
+            <a class="pill" href="/leaderboard">Ver Tabela</a>
+            <a class="pill" href="/">Pagina Inicial</a>
             <a class="pill" href="/logout">Logout</a>
           </div>
         </form>
       </div>
       <div class="card">
-        <h2 class="title">Artists</h2>
+        <h2 class="title">Comediantes</h2>
         <ul class="list">
           ${artists.map(a => `
             <li>
               <span>${a.name}</span>
-              <span><a href="/a/${a.slug}">Share link</a></span>
+              <span><a href="/a/${a.slug}">Compartilhar</a></span>
             </li>
           `).join('')}
         </ul>
