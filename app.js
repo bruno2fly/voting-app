@@ -360,5 +360,22 @@ app.get('/api/leaderboard', (req, res) => {
 // ---------- Static health ----------
 app.get('/healthz', (_, res) => res.send('ok'));
 
-app.listen(PORT, () => console.log(`Voting app running on http://localhost:${PORT}`));
+
+app.get('/api/debug/votes', (req, res) => {
+  const rows = db.prepare(`
+    SELECT artist_id,
+           COUNT(*)            AS votes,
+           SUM(score)          AS total_score,
+           ROUND(AVG(score),2) AS avg_score
+    FROM votes
+    GROUP BY artist_id
+    ORDER BY artist_id
+  `).all();
+  res.json(rows);
+});
+
+
+
+
+\app.listen(PORT, () => console.log(`Voting app running on http://localhost:${PORT}`));
 
