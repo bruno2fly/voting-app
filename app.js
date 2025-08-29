@@ -304,7 +304,7 @@ app.get('/a/:slug', (req, res) => {
     }
   });
 </script>
-  res.send(layout({ title:`Votar — ${artist.name}`, body }));
+  res.send(layout({ title:`res.send(layout({ title: 'Votar — ' + artist.name, body }));
 });
 
 app.post('/api/vote', (req, res) => {
