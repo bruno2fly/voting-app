@@ -80,8 +80,8 @@ function layout({ title, body }) {
       body {
         margin: 0;
         font-family: Arial, sans-serif;
-        background: #000;
-        color: #fff;
+        background: #fff;      /* white background */
+        color: #000;           /* black text */
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -90,14 +90,14 @@ function layout({ title, body }) {
       header { padding: 20px; text-align: center; }
       header img { max-width: 220px; height: auto; }
       .container { max-width: 720px; width: 100%; padding: 20px; }
-      .card { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+      .card { background: #f9f9f9; border: 1px solid #ccc; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
       .title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
       .list { list-style: none; padding: 0; }
-      .list li { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 10px 0; }
-      a, button { background: #fff; color: #000; padding: 8px 14px; border-radius: 6px; border: none; text-decoration: none; font-weight: bold; cursor: pointer; }
-      input { padding: 10px; border-radius: 6px; border: 1px solid #333; width: 100%; margin-bottom: 10px; background: #000; color: #fff; }
+      .list li { display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 10px 0; }
+      a, button { background: #000; color: #fff; padding: 8px 14px; border-radius: 6px; border: none; text-decoration: none; font-weight: bold; cursor: pointer; }
+      input { padding: 10px; border-radius: 6px; border: 1px solid #ccc; width: 100%; margin-bottom: 10px; }
       .row { display:flex; gap:12px; flex-wrap:wrap; }
-      .pill { background:#000; color:#fff; border:1px solid #333; }
+      .pill { background:#fff; color:#000; border:1px solid #000; }
     </style>
   </head>
   <body>
@@ -110,7 +110,6 @@ function layout({ title, body }) {
   </body>
   </html>`;
 }
-
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
