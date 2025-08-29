@@ -149,7 +149,7 @@ app.get('/', (req, res) => {
   const body = `
     <div class="card">
       <h1 class="title">Votação Open Mic</h1>
-      <p class="muted">Clique no Artista para dar o seu voto com notas de 0-10</p>
+      <p class="muted">Clique em votar e vote com pontuação 0-10</p>
       <ul class="list">
         ${artists.map(a => `
           <li>
@@ -222,8 +222,8 @@ app.get('/leaderboard', (req, res) => {
   const rows = leaderboardStmt.all();
   const body = `
     <div class="card">
-      <h1 class="title">Leaderboard</h1>
-      <p class="muted">Sorted by average score (then votes).</p>
+      <h1 class="title">Tabela de Liderança</h1>
+      <p class="muted">Pontuação é por soma de todos os votos.</p>
       <ul class="list">
         ${rows.map((r, i) => `
           <li>
@@ -232,7 +232,7 @@ app.get('/leaderboard', (req, res) => {
           </li>`).join('')}
       </ul>
       <div class="row" style="margin-top:12px">
-        <a class="pill" href="/">Back</a>
+        <a class="pill" href="/">Voltar</a>
       </div>
     </div>`;
   res.send(layout({ title: 'Leaderboard', body }));
