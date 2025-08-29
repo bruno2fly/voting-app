@@ -226,8 +226,6 @@ app.get('/staff', (req, res) => {
         else { msg.textContent = data.error || 'Falha ao criar'; }
       });
     </script>`;
-  res.send(layout({ title:'Área do Staff', body }));
-});
 
 // ---------- APIs ----------
 app.post('/api/artists', (req, res) => {
@@ -242,12 +240,17 @@ app.post('/api/artists', (req, res) => {
     res.status(400).json({ error:'Não foi possível criar artista' });
   }
 });
-
 app.get('/a/:slug', (req, res) => {
   const artist = getArtistBySlug.get(req.params.slug);
   if (!artist) return res.status(404).send('Artista não encontrado');
 
-  setVoterCookie(req, res);
+  // keep/set a harmless cookie for consistency on mobile
+  if (!req.cookies.voter) {
+    res.cookie('voter', crypto.randomBytes(16).toString('hex'), {
+      httpOnly: true, sameSite: 'lax', maxAge: 1000*60*60*24*365
+    });
+  }
+
   const body = `
     <div class="card">
       <h1 class="title">Votar: ${artist.name}</h1>
@@ -262,7 +265,50 @@ app.get('/a/:slug', (req, res) => {
       </form>
       <p id="msg" class="muted" style="margin-top:12px"></p>
     </div>
-<script>
+    <script>
+      const form = document.getElementById('voteForm');
+      const msg  = document.getElementById('msg');
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        msg.textContent = 'Enviando...';
+
+        const fd = new FormData(form);
+        const payload = {
+          artist_id: Number(fd.get('artist_id')),
+          score: Number(fd.get('score'))
+        };
+
+        const url = window.location.origin + '/api/vote';
+
+        try {
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            credentials: 'same-origin'
+          });
+
+          let data = {};
+          try { data = await r.json(); } catch (_) {}
+
+          if (r.ok) {
+            msg.textContent = 'Obrigado! Seu voto foi registrado.';
+          } else {
+            msg.textContent = data.error || ('Falha (' + r.status + '). Tente novamente.');
+          }
+        } catch (err) {
+          console.error('VOTE_FETCH_ERROR', err);
+          msg.textContent = 'Não foi possível enviar o voto (conexão). Tente novamente.';
+        }
+      });
+  </script>
+  `;
+
+  // send the page
+  res.send(layout({ title: 'Votar - ' + artist.name, body }));
+});
+
   const form = document.getElementById('voteForm');
   const msg  = document.getElementById('msg');
 
