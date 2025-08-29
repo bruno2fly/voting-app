@@ -158,7 +158,6 @@ app.get('/', (req, res) => {
       </ul>
     </div>`;
   res.send(layout({ title:'Início', body }));
-});
 
 app.get('/staff-login', (req, res) => {
   const body = `
@@ -184,6 +183,21 @@ app.post('/staff-login', (req, res) => {
   return res.status(401).send('Senha incorreta');
 });
 
+app.post('/api/delete-artist', (req, res) => {
+  if (!isStaff(req)) return res.status(403).json({ error: 'Acesso negado' });
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ error: 'ID do artista é obrigatório' });
+
+  try {
+    db.prepare('DELETE FROM artists WHERE id = ?').run(id);
+    db.prepare('DELETE FROM votes WHERE artist_id = ?').run(id); // remove votes too
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover comediante' });
+  }
+});
+
+
 app.get('/staff', (req, res) => {
   if (!isStaff(req)) return res.status(403).send('Acesso negado');
   const rows = listArtists.all();
@@ -202,13 +216,19 @@ app.get('/staff', (req, res) => {
       <p id="msg" class="muted" style="margin-top:12px"></p>
 
       <h3 style="margin-top:24px">Artistas</h3>
-      <ul class="list">
-        ${rows.map(r => `
-          <li>
-            <span>${r.name}</span>
-            <span><a href="/a/${r.slug}">Compartilhar link</a></span>
-          </li>`).join('')}
-      </ul>
+app.post('/api/delete-artist', (req, res) => {
+  if (!isStaff(req)) return res.status(403).json({ error: 'Acesso negado' });
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ error: 'ID do artista é obrigatório' });
+
+  try {
+    db.prepare('DELETE FROM artists WHERE id = ?').run(id);
+    db.prepare('DELETE FROM votes WHERE artist_id = ?').run(id); // remove votes too
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Erro ao remover comediante' });
+  }
+});
     </div>
     <script>
       const f = document.getElementById('createForm');
@@ -244,7 +264,7 @@ app.get('/a/:slug', (req, res) => {
   const artist = getArtistBySlug.get(req.params.slug);
   if (!artist) return res.status(404).send('Artista não encontrado');
 
-  // keep/set a harmless cookie for consistency on mobile
+  // opcional: cookie simples para consistência em mobile
   if (!req.cookies.voter) {
     res.cookie('voter', crypto.randomBytes(16).toString('hex'), {
       httpOnly: true, sameSite: 'lax', maxAge: 1000*60*60*24*365
@@ -302,55 +322,11 @@ app.get('/a/:slug', (req, res) => {
           msg.textContent = 'Não foi possível enviar o voto (conexão). Tente novamente.';
         }
       });
-  </script>
+    </script>
   `;
 
-  // send the page
+  // use plain single quotes to avoid smart-quote issues
   res.send(layout({ title: 'Votar - ' + artist.name, body }));
-});
-
-  const form = document.getElementById('voteForm');
-  const msg  = document.getElementById('msg');
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    msg.textContent = 'Enviando...';
-
-    const fd = new FormData(form);
-    const payload = {
-      artist_id: Number(fd.get('artist_id')),
-      score: Number(fd.get('score'))
-    };
-
-    // Always post to the same origin (works on mobile/public URL)
-    const url = window.location.origin + '/api/vote';
-
-    try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        // keep credentials same-origin; avoids cookie/CORS quirks
-        credentials: 'same-origin'
-      });
-
-      // Try to parse JSON even on non-200
-      let data = {};
-      try { data = await r.json(); } catch (_) {}
-
-      if (r.ok) {
-        msg.textContent = 'Obrigado! Seu voto foi registrado.';
-      } else {
-        msg.textContent = data.error || ('Falha (' + r.status + '). Tente novamente.');
-      }
-    } catch (err) {
-      // Network/CORS/HTTPS issues will land here — show it!
-      console.error('VOTE_FETCH_ERROR', err);
-      msg.textContent = 'Não foi possível enviar o voto (conexão). Verifique a internet e tente novamente.';
-    }
-  });
-</script>
-  res.send(layout({ title:`res.send(layout({ title: 'Votar — ' + artist.name, body }));
 });
 
 app.post('/api/vote', (req, res) => {
