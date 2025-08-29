@@ -234,22 +234,62 @@ app.get('/staff', (req, res) => {
 
 // -------- Staff Login --------
 function isStaff(req) {
-  return req.cookies.staff === (process.env.STAFF_PASS || 'change-this-staff-pass');
+  return req.cookies.staff === 'ok';
 }
 
-app.post('/staff/login', (req, res) => {
-  const { password } = req.body || {};
-  if (password === (process.env.STAFF_PASS || 'change-this-staff-pass')) {
-    res.cookie('staff', password, { httpOnly: true });
-    res.redirect('/staff');
-  } else {
-    res.status(403).send('Senha incorreta');
+app.post('/staff-login', (req, res) => {
+  const password = (req.body.password || '').trim();
+  if (password && password === (process.env.STAFF_PASS || 'mude-esta-senha')) {
+    // store a simple flag in the cookie
+    res.cookie('staff', 'ok', { httpOnly: true, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 8 });
+    return res.redirect('/staff');
   }
+  return res.status(401).send('Senha incorreta');
 });
+
 
 app.get('/staff', (req, res) => {
   if (!isStaff(req)) return res.status(403).send('Acesso negado');
-  // here you render staff page
+  const rows = listArtists.all();
+  const body = `
+    <div class="card">
+      <h1 class="title">Criar Artista</h1>
+      <p class="muted">Adicione um artista e compartilhe o link de votação.</p>
+      <form id="createForm">
+        <input type="text" name="name" placeholder="Nome do artista" required />
+        <div class="row" style="margin-top:12px">
+          <button type="submit">Criar</button>
+          <a class="pill" href="/leaderboard">Ver Tabela</a>
+          <a class="pill" href="/">Página Pública</a>
+        </div>
+      </form>
+      <p id="msg" class="muted" style="margin-top:12px"></p>
+      <h3 style="margin-top:24px">Artistas</h3>
+      <ul class="list">
+        ${rows.map(r => `
+          <li>
+            <span>${r.name}</span>
+            <span><a href="/a/${r.slug}">Compartilhar link</a></span>
+          </li>`).join('')}
+      </ul>
+    </div>
+    <script>
+      const f = document.getElementById('createForm');
+      const msg = document.getElementById('msg');
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(f);
+        const r = await fetch('/api/artists', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({ name: fd.get('name') })
+        });
+        const data = await r.json();
+        if (r.ok) { msg.textContent = 'Criado: ' + data.name + ' — link ' + data.link; location.reload(); }
+        else { msg.textContent = data.error || 'Falha ao criar'; }
+      });
+    </script>`;
+  res.send(layout({ title:'Área do Staff', body }));
 });
 
 app.post('/api/artists', (req, res) => {
