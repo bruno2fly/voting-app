@@ -262,22 +262,48 @@ app.get('/a/:slug', (req, res) => {
       </form>
       <p id="msg" class="muted" style="margin-top:12px"></p>
     </div>
-    <script>
-      const form = document.getElementById('voteForm');
-      const msg = document.getElementById('msg');
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const fd = new FormData(form);
-        const payload = { artist_id: Number(fd.get('artist_id')), score: Number(fd.get('score')) };
-        const r = await fetch('/api/vote', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(payload)
-        });
-        const data = await r.json();
-        msg.textContent = r.ok ? 'Obrigado! Seu voto foi registrado.' : (data.error || 'Não foi possível registrar o voto.');
+<script>
+  const form = document.getElementById('voteForm');
+  const msg  = document.getElementById('msg');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = 'Enviando...';
+
+    const fd = new FormData(form);
+    const payload = {
+      artist_id: Number(fd.get('artist_id')),
+      score: Number(fd.get('score'))
+    };
+
+    // Always post to the same origin (works on mobile/public URL)
+    const url = window.location.origin + '/api/vote';
+
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        // keep credentials same-origin; avoids cookie/CORS quirks
+        credentials: 'same-origin'
       });
-    </script>`;
+
+      // Try to parse JSON even on non-200
+      let data = {};
+      try { data = await r.json(); } catch (_) {}
+
+      if (r.ok) {
+        msg.textContent = 'Obrigado! Seu voto foi registrado.';
+      } else {
+        msg.textContent = data.error || ('Falha (' + r.status + '). Tente novamente.');
+      }
+    } catch (err) {
+      // Network/CORS/HTTPS issues will land here — show it!
+      console.error('VOTE_FETCH_ERROR', err);
+      msg.textContent = 'Não foi possível enviar o voto (conexão). Verifique a internet e tente novamente.';
+    }
+  });
+</script>
   res.send(layout({ title:`Votar — ${artist.name}`, body }));
 });
 
