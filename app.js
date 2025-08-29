@@ -102,7 +102,7 @@ function layout({ title, body }) {
   </head>
   <body>
     <header>
-      <img src="/logo.jpeg" alt="Ratazana Comedy Logo" />
+      <img src="public/logo.jpeg" alt="Ratazana Comedy Logo" />
     </header>
     <div class="container">
       ${body}
