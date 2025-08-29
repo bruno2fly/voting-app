@@ -316,41 +316,39 @@ app.post('/api/artists', (req, res) => {
 });
 
 app.post('/api/vote', (req, res) => {
-  const { artist_id, score } = req.body || {};
-  if (typeof artist_id !== 'number' || typeof score !== 'number') {
-    return res.status(400).json({ error: 'artist_id and score are required' });
-  }
-  if (score < 0 || score > 10 || !Number.isInteger(score)) {
-    return res.status(400).json({ error: 'Score must be an integer 0–10' });
-  }
-  const artist = getArtistById.get(artist_id);
-  if (!artist) return res.status(404).json({ error: 'Artist not found' });
-
-  const ip = clientIp(req);
-  const hash = ipHash(ip);
-  const guardToken = cookieGuard(req, res);
-
-  // Optional time window: block repeat votes from same IP within window
-  if (VOTE_WINDOW_MINUTES > 0) {
-    const row = db.prepare(`SELECT 1 FROM votes WHERE artist_id = ? AND ip_hash = ? ${voteWindowQuery()} LIMIT 1`).get(artist_id, hash);
-    if (row) return res.status(409).json({ error: `You have already voted recently for this artist.` });
-  } else {
-    const dup = getVoteByArtistAndIp.get(artist_id, hash);
-    if (dup) return res.status(409).json({ error: 'You have already voted for this artist.' });
-  }
-
-  // Soft cookie guard (helps within same IP household)
-  const cookieCount = countVotesByCookie.get(artist_id, guardToken)?.n || 0;
-  if (cookieCount > 0) {
-    return res.status(409).json({ error: 'You have already voted for this artist (cookie).' });
-  }
-
   try {
-    insertVote.run(artist_id, score, hash, (req.headers['user-agent'] || '').slice(0, 255), guardToken);
-  } catch (e) {
-    return res.status(400).json({ error: 'Vote not recorded' });
+    // Parse numbers safely (form sends strings)
+    const artist_id = Number(req.body.artist_id);
+    const score = Number(req.body.score);
+
+    if (!Number.isInteger(artist_id) || !Number.isInteger(score)) {
+      return res.status(400).json({ error: 'artist_id and score are required' });
+    }
+    if (score < 0 || score > 10) {
+      return res.status(400).json({ error: 'Score must be an integer 0–10' });
+    }
+
+    // Artist must exist
+    const artist = getArtistById.get(artist_id);
+    if (!artist) {
+      return res.status(404).json({ error: 'Artist not found' });
+    }
+
+    // IP + guard
+    const ip = clientIp(req);
+    const ip_hash = ipHash(ip);
+    const guardToken = cookieGuard(req, res);
+
+    try {
+      insertVote.run({ artist_id, score, ip_hash });
+      return res.json({ ok: true, guardToken });
+    } catch (err) {
+      return res.status(409).json({ error: 'You already voted for this artist.' });
+    }
+  } catch (err) {
+    console.error('VOTE_ERROR', err);
+    return res.status(500).json({ error: 'Server error while recording vote' });
   }
-  res.json({ ok: true });
 });
 
 app.get('/api/leaderboard', (req, res) => {
