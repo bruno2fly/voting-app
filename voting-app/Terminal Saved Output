@@ -1,0 +1,48 @@
+Last login: Thu Aug 28 18:11:57 on ttys000
+brunopaeselima@Brunos-MacBook-Pro ~ % cd ~/voting-app
+nano app.js
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  GNU nano 2.0.6               File: app.js                           Modified  
+
+const http = require('http');
+http.createServer((req, res) => { res.end('Node is working'); })
+.listen(3000, () => console.log('http://localhost:3000'));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                               [ Wrote 4 lines ]
+^G Get Help  ^O WriteOut  ^R Read File ^Y Prev Page ^K Cut Text  ^C Cur Pos
+^X Exit      ^J Justify   ^W Where Is  ^V Next Page ^U UnCut Text^T To Spell
